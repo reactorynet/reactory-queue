@@ -1,0 +1,13 @@
+{
+  "name": "reactory-queue",
+  "version": "1.0.0",
+  "description": "A queue library for reactory platform",
+  "main": "index.ts",
+  "repository": "https://github.com/reactorynet/reactory-queue",
+  "author": "W. Weber",
+  "license": "apache2",
+  "dependencies": {
+    "aws-sdk": "2.1692.0",
+    "bullmq": "5.25.4"
+  }
+}
