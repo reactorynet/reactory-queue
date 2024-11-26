@@ -80,7 +80,7 @@ export class InMemoryQueueService implements QueueServiceType {
     const queueName = options?.queueId || DEFAULT_QUEUE_NAME;
     const queue = this.queue.get(queueName);
     if (!queue) throw new Error(`Queue ${queueName} does not exist.`);
-    const maxMessages = options?.maxMessages ?? queue.length;
+    const maxMessages = options?.max ?? queue.length;
     return queue.slice(0, maxMessages);
   }
 
@@ -108,13 +108,13 @@ export class InMemoryQueueService implements QueueServiceType {
     const healthCheckMessage: EventEnvelope = { message: 'Health check message', timestamp: Date.now() };
     await this.enqueue(healthCheckMessage, { queueId: HEALTH_CHECK_QUEUE_NAME });
 
-    console.log('Health check message enqueued to in-memory queue.');
+    context.log('Health check message enqueued to in-memory queue.');
 
     // Process the health check message
     const healthCheckQueue = this.queue.get(HEALTH_CHECK_QUEUE_NAME);
     if (healthCheckQueue && healthCheckQueue.length > 0) {
       const message = healthCheckQueue.shift();
-      console.log('Processing health check message:', message);
+      context.log('Processing health check message:', message);
     }
   }
   

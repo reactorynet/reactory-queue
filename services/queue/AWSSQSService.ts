@@ -1,6 +1,7 @@
 import Reactory from "@reactory/reactory-core";
 import {  
-  SQS
+  SQS,
+
 } from 'aws-sdk';
 import { service } from "@reactory/server-core/application/decorators";
 import { 
@@ -14,7 +15,7 @@ import {
 const {
   DEFAULT_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/defaultQueue',
   HEALTH_CHECK_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/healthCheckQueue'
-} = process.env;
+} = process.env;s
 
 
 @service({
@@ -39,7 +40,7 @@ export class AWSSQSQueueService implements QueueServiceType {
   context: Reactory.Server.IReactoryContext;
 
   provider: string = 'aws-sqs';
-  sqsClient: SQS.ClientConfiguration;
+  sqsClient: SQS
   queueUrl: string;
   healthCheckQueueUrl: string;
 
@@ -85,7 +86,7 @@ export class AWSSQSQueueService implements QueueServiceType {
   async receiveMessages(options?: ReceiveMessageOptions): Promise<EventEnvelope[]> {
     const command = new ReceiveMessageCommand({
       QueueUrl: this.queueUrl,
-      MaxNumberOfMessages: options?.maxMessages ?? 10,
+      MaxNumberOfMessages: options?.max ?? 10,
       WaitTimeSeconds: options?.waitTimeSeconds ?? 10
     });
 

@@ -8,6 +8,7 @@
   "license": "apache2",
   "dependencies": {
     "aws-sdk": "2.1692.0",
-    "bullmq": "5.25.4"
+    "bullmq": "5.25.4",
+    "bullmq-otel": "1.0.1"
   }
 }

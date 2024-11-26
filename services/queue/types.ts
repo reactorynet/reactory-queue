@@ -46,7 +46,7 @@ export interface IQueueService<TEnvelope, TId> extends Reactory.Service.IReactor
    * @param message 
    * @param options 
    */
-  enqueue(message: TEnvelope, options?: IEnqueueOptions): Promise<TId>;
+  enqueue(message: TEnvelope, options?: any): Promise<TId>;
   /**
    * Removes an envelope from a queue
    */

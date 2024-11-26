@@ -1,5 +1,5 @@
 import Reactory from "@reactory/reactory-core";
-import { Worker, Queue } from 'bullmq';
+import { Worker, Queue, JobsOptions } from 'bullmq';
 import { service } from "@reactory/server-core/application/decorators";
 import { 
   DeleteMessageOptions, 
@@ -44,11 +44,24 @@ export class BullMessageQueueService implements QueueServiceType {
     this.context = context;
 
     // Initialize BullMQ queues with default queue names
-    this.queue = new Queue(DEFAULT_QUEUE_NAME);
-    this.healthCheckQueue = new Queue(HEALTH_CHECK_QUEUE_NAME);
+    this.queue = new Queue(DEFAULT_QUEUE_NAME, { 
+      connection: {
+        host: process.env.REACTORY_REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REACTORY_REDIS_PORT || '6379', 10),
+        password: process.env.REACTORY_REDIS_PASSWORD || 'reactory'
+      }
+    });
+
+    this.healthCheckQueue = new Queue(HEALTH_CHECK_QUEUE_NAME, {
+      connection: {
+        host: process.env.REACTORY_REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REACTORY_REDIS_PORT || '6379', 10),
+        password: process.env.REACTORY_REDIS_PASSWORD || 'reactory'
+      }
+    });
   }
   
-  async enqueue(message: EventEnvelope, options?: IEnqueueOptions): Promise<string> {
+  async enqueue(message: EventEnvelope, options?: JobsOptions): Promise<string> {
     const job = await this.queue.add('enqueueJob', message, options);
     return job.id;
   }
@@ -75,7 +88,7 @@ export class BullMessageQueueService implements QueueServiceType {
   }
 
   async receiveMessages(options?: ReceiveMessageOptions): Promise<EventEnvelope[]> {
-    const jobs = await this.queue.getJobs(['active', 'waiting'], 0, options?.maxMessages ?? 10);
+    const jobs = await this.queue.getJobs(['active', 'waiting'], 0, options?.max ?? 10);
     return jobs.map(job => job.data as EventEnvelope);
   }
 
@@ -94,24 +107,28 @@ export class BullMessageQueueService implements QueueServiceType {
     return true;
   }
 
-  async onStartup(context: Reactory.Server.IReactoryContext): Promise<void> {
-    this.context = context;
-
+  async onStartup(): Promise<void> {
+    const { context } = this;
+    context.log('BullMessageQueueService starting');
     // Send a health check message to verify queue functionality
     await this.healthCheckQueue.add('healthCheck', { message: 'Health check message' });
 
     // Process the health check message
     const healthCheckWorker = new Worker(HEALTH_CHECK_QUEUE_NAME, async job => {
-      console.log('Processing health check message:', job.data.message);
-    });
+      context.log('Processing health check message:', job.data.message);
+    }, { connection: {
+      host: process.env.REACTORY_REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REACTORY_REDIS_PORT || '6379', 10),
+      password: process.env.REACTORY_REDIS_PASSWORD || 'reactory'
+    } });
 
     healthCheckWorker.on('completed', () => {
-      console.log('Health check message processed successfully');
+      context.log('Health check message processed successfully');
       healthCheckWorker.close();
     });
 
     healthCheckWorker.on('failed', (job, err) => {
-      console.error(`Health check job ${job.id} failed:`, err);
+      context.error(`Health check job ${job.id} failed:`, err);
     });
   }
   
