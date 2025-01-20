@@ -1,4 +1,4 @@
-import { EventPriority, IEvent, EventType } from "@reactory/server-modules/zepz-comms-centre/models/event/types";
+import { EventPriority, IEvent, EventType } from "@reactory/server-modules/reactory-communicator/models/event/types";
 
 export type THeader = Reactory.IKeyValuePair<string, unknown>;
 
