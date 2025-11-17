@@ -115,7 +115,7 @@ export class BullMessageQueueService implements QueueServiceType {
 
     // Process the health check message
     const healthCheckWorker = new Worker(HEALTH_CHECK_QUEUE_NAME, async job => {
-      context.log('Processing health check message:', job.data.message);
+      context.debug('Processing health check message:', null, 'BullMessageQueueService.onStartup');
     }, { connection: {
       host: process.env.REACTORY_REDIS_HOST || 'localhost',
       port: parseInt(process.env.REACTORY_REDIS_PORT || '6379', 10),
@@ -123,12 +123,12 @@ export class BullMessageQueueService implements QueueServiceType {
     } });
 
     healthCheckWorker.on('completed', () => {
-      context.log('Health check message processed successfully');
+      context.debug('Health check message processed successfully', null , 'BullMessageQueueService.onStartup');
       healthCheckWorker.close();
     });
 
     healthCheckWorker.on('failed', (job, err) => {
-      context.error(`Health check job ${job.id} failed:`, err);
+      context.error(`Health check job ${job.id} failed:`, err, 'BullMessageQueueService.onStartup');      
     });
   }
   

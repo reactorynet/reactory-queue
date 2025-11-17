@@ -2,7 +2,6 @@
   "name": "reactory-queue",
   "version": "1.0.0",
   "description": "A queue library for reactory platform. Provides services for AWS SQS and BullMQ",
-  "main": "index.js",  
   "type": "commonjs",
   "repository": "https://github.com/reactorynet/reactory-queue",
   "author": "W. Weber",
