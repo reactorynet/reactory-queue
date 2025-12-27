@@ -1,8 +1,21 @@
 import Reactory from "@reactory/reactory-core";
-import {  
-  SQS,
-
-} from 'aws-sdk';
+/**
+ * AWS SQS Service Implementation
+ * 
+ * This service requires @aws-sdk/client-sqs to be installed as an optional dependency.
+ * To use this service, install it with:
+ * yarn add @aws-sdk/client-sqs
+ * 
+ * @requires @aws-sdk/client-sqs
+ */
+// @ts-ignore - Optional dependency, may not be installed
+import { 
+  SQSClient,
+  SendMessageCommand,
+  DeleteMessageCommand,
+  ReceiveMessageCommand,
+  GetQueueAttributesCommand
+} from '@aws-sdk/client-sqs';
 import { service } from "@reactory/server-core/application/decorators";
 import { 
   DeleteMessageOptions, 
@@ -15,7 +28,7 @@ import {
 const {
   DEFAULT_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/defaultQueue',
   HEALTH_CHECK_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/healthCheckQueue'
-} = process.env;s
+} = process.env;
 
 
 @service({
@@ -40,7 +53,7 @@ export class AWSSQSQueueService implements QueueServiceType {
   context: Reactory.Server.IReactoryContext;
 
   provider: string = 'aws-sqs';
-  sqsClient: SQS
+  sqsClient: SQSClient;
   queueUrl: string;
   healthCheckQueueUrl: string;
 
@@ -48,9 +61,15 @@ export class AWSSQSQueueService implements QueueServiceType {
     this.props = props;
     this.context = context;
 
-    // Initialize SQS client and queue URLs
-    this.queueUrl = DEFAULT_SQS_QUEUE_URL;
-    this.healthCheckQueueUrl = HEALTH_CHECK_SQS_QUEUE_URL;
+    // Initialize SQS client
+    this.sqsClient = new SQSClient({
+      region: props?.region || process.env.AWS_REGION || 'us-east-1',
+      credentials: props?.credentials || undefined
+    });
+
+    // Initialize queue URLs
+    this.queueUrl = props?.queueUrl || DEFAULT_SQS_QUEUE_URL;
+    this.healthCheckQueueUrl = props?.healthCheckQueueUrl || HEALTH_CHECK_SQS_QUEUE_URL;
   }
   
   async enqueue(message: EventEnvelope, options?: IEnqueueOptions): Promise<string> {
@@ -64,7 +83,7 @@ export class AWSSQSQueueService implements QueueServiceType {
   }
 
   async dequeue(): Promise<EventEnvelope> {
-    const messages = await this.receiveMessages({ maxMessages: 1 });
+    const messages = await this.receiveMessages({ max: 1 });
     if (messages.length > 0) {
       return messages[0];
     }
@@ -85,16 +104,18 @@ export class AWSSQSQueueService implements QueueServiceType {
 
   async receiveMessages(options?: ReceiveMessageOptions): Promise<EventEnvelope[]> {
     const command = new ReceiveMessageCommand({
-      QueueUrl: this.queueUrl,
+      QueueUrl: options?.queueId || this.queueUrl,
       MaxNumberOfMessages: options?.max ?? 10,
-      WaitTimeSeconds: options?.waitTimeSeconds ?? 10
+      WaitTimeSeconds: 10
     });
 
     const response = await this.sqsClient.send(command);
-    return (response.Messages ?? []).map(msg => ({
-      ...JSON.parse(msg.Body ?? '{}'),
-      receiptHandle: msg.ReceiptHandle
-    }));
+    return (response.Messages ?? []).map((msg: any) => {
+      const envelope = JSON.parse(msg.Body ?? '{}') as EventEnvelope;
+      // Store receipt handle in header for deletion
+      envelope.header.id = msg.ReceiptHandle || envelope.header.id;
+      return envelope;
+    });
   }
 
   async count(queueId?: string): Promise<number> {
@@ -113,20 +134,32 @@ export class AWSSQSQueueService implements QueueServiceType {
     return true;
   }
 
-  async onStartup(context: Reactory.Server.IReactoryContext): Promise<void> {
-    this.context = context;
+  async onStartup(): Promise<void> {
+    const { context } = this;
 
-    // Send a health check message
-    const healthCheckMessage = { message: 'Health check message', timestamp: Date.now() };
-    const command = new SendMessageCommand({
-      QueueUrl: this.healthCheckQueueUrl,
-      MessageBody: JSON.stringify(healthCheckMessage)
-    });
-    await this.sqsClient.send(command);
+    try {
+      // Send a health check message as EventEnvelope
+      const healthCheckMessage: EventEnvelope = {
+        header: {
+          id: `health-check-${Date.now()}`,
+          receivedTimestamp: Date.now(),
+          provider: this.provider
+        },
+        body: {
+          validationResults: ['Health check message']
+        }
+      };
+      
+      const command = new SendMessageCommand({
+        QueueUrl: this.healthCheckQueueUrl,
+        MessageBody: JSON.stringify(healthCheckMessage)
+      });
+      await this.sqsClient.send(command);
 
-    console.log('Health check message sent to health check queue.');
-    
-    // Optional: Set up periodic health check or message processing as needed
+      context.log('Health check message sent to AWS SQS health check queue', 'AWSSQSQueueService.onStartup');
+    } catch (error) {
+      context.error('Failed to send health check message to AWS SQS', error, 'AWSSQSQueueService.onStartup');
+    }
   }
   
   toString?(includeVersion?: boolean): string {

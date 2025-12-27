@@ -109,3 +109,6 @@ export interface EventEnvelopeBody {
 export type EventEnvelope = IQueueEnvelope<EnvelopeHeader, EventEnvelopeBody>
 
 export type QueueServiceType = IQueueService<EventEnvelope, string>
+
+// Re-export QueueProvider types
+export type { IQueueProviderConfig } from './QueueProvider';

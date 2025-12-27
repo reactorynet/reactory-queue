@@ -101,20 +101,30 @@ export class InMemoryQueueService implements QueueServiceType {
     return this.queue.delete(queueId);
   }
 
-  async onStartup(context: Reactory.Server.IReactoryContext): Promise<void> {
-    this.context = context;
+  async onStartup(): Promise<void> {
+    const { context } = this;
 
     // Enqueue a health check message
-    const healthCheckMessage: EventEnvelope = { message: 'Health check message', timestamp: Date.now() };
+    const healthCheckMessage: EventEnvelope = {
+      header: {
+        id: `health-check-${Date.now()}`,
+        receivedTimestamp: Date.now(),
+        provider: this.provider
+      },
+      body: {
+        validationResults: ['Health check message']
+      }
+    };
+    
     await this.enqueue(healthCheckMessage, { queueId: HEALTH_CHECK_QUEUE_NAME });
 
-    context.log('Health check message enqueued to in-memory queue.');
+    context.log('Health check message enqueued to in-memory queue', 'InMemoryQueueService.onStartup');
 
     // Process the health check message
     const healthCheckQueue = this.queue.get(HEALTH_CHECK_QUEUE_NAME);
     if (healthCheckQueue && healthCheckQueue.length > 0) {
       const message = healthCheckQueue.shift();
-      context.log('Processing health check message:', message);
+      context.log('Processing health check message', message, 'InMemoryQueueService.onStartup');
     }
   }
   
