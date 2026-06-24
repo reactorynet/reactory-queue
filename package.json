@@ -6,7 +6,7 @@
   "repository": "https://github.com/reactorynet/reactory-queue",
   "author": "W. Weber",
   "license": "MIT",
-  "dependencies": {  
+  "dependencies": {
     "@aws-sdk/client-sqs": "3.775.0",
     "bullmq": "5.25.4",
     "bullmq-otel": "1.0.1"
