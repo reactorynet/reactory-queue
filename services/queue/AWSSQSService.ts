@@ -134,8 +134,35 @@ export class AWSSQSQueueService implements QueueServiceType {
     return true;
   }
 
+  /**
+   * Whether SQS was actually configured.
+   *
+   * The module's fallback URLs are placeholders (region `default-region`, account
+   * `123456789012`), so their presence does not mean SQS is in use. Only env or
+   * props supplying a queue URL counts. Without this guard every boot attempts a
+   * health check against the placeholder queue and logs
+   * `CredentialsProviderError: Could not load credentials from any providers`.
+   */
+  private isConfigured(): boolean {
+    return Boolean(
+      this.props?.queueUrl ||
+      this.props?.healthCheckQueueUrl ||
+      process.env.DEFAULT_SQS_QUEUE_URL ||
+      process.env.HEALTH_CHECK_SQS_QUEUE_URL
+    );
+  }
+
   async onStartup(): Promise<void> {
     const { context } = this;
+
+    if (!this.isConfigured()) {
+      context.warn(
+        'AWS SQS is not configured (no queue URL); skipping the startup health check. ' +
+          'Set DEFAULT_SQS_QUEUE_URL / HEALTH_CHECK_SQS_QUEUE_URL (and credentials) to enable SQS.',
+        'AWSSQSQueueService.onStartup'
+      );
+      return;
+    }
 
     try {
       // Send a health check message as EventEnvelope
