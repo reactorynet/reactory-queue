@@ -160,7 +160,13 @@ describe('QueueProvider', () => {
 
     test('should receive messages from default provider', async () => {
       const provider = queueProvider.getDefaultProvider();
-      
+
+      // The in-memory provider only pre-creates its default and health-check
+      // queues; enqueueing to an unknown queue id throws rather than creating
+      // it (this provider does not implement IEnqueueOptions.createIfNotExists).
+      // Create the queue through the provider's own API first.
+      await provider?.createQueue('test-queue');
+
       const message: EventEnvelope = {
         header: {
           id: 'test-msg-002',
@@ -174,8 +180,10 @@ describe('QueueProvider', () => {
 
       await provider?.enqueue(message, { queueId: 'test-queue' });
       const count = await provider?.count('test-queue');
-      
-      expect(count).toBeGreaterThan(0);
+
+      // Exactly the one message we enqueued: asserts it landed on this queue,
+      // not merely that some queue is non-empty.
+      expect(count).toBe(1);
     });
   });
 
@@ -230,9 +238,17 @@ describe('QueueProvider', () => {
 
   describe('Service Interface', () => {
     test('should implement toString', () => {
+      // nameSpace / name / version come from the @service metadata and are
+      // assigned by the framework when it instantiates the service; a directly
+      // constructed instance has them unset. Simulate that injection step, as
+      // the other service specs do (see ReactorySearchService.test.ts).
+      queueProvider.nameSpace = 'reactory';
+      queueProvider.name = 'QueueProvider';
+      queueProvider.version = '1.0.0';
+
       const str = queueProvider.toString();
       expect(str).toBe('reactory.QueueProvider');
-      
+
       const strWithVersion = queueProvider.toString(true);
       expect(strWithVersion).toBe('reactory.QueueProvider@1.0.0');
     });
