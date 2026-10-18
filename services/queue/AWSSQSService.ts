@@ -14,7 +14,9 @@ import {
   SendMessageCommand,
   DeleteMessageCommand,
   ReceiveMessageCommand,
-  GetQueueAttributesCommand
+  GetQueueAttributesCommand,
+  GetQueueUrlCommand,
+  CreateQueueCommand
 } from '@aws-sdk/client-sqs';
 import { service } from "@reactory/server-core/application/decorators";
 import { 
@@ -27,8 +29,21 @@ import {
 
 const {
   DEFAULT_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/defaultQueue',
-  HEALTH_CHECK_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/healthCheckQueue'
+  HEALTH_CHECK_SQS_QUEUE_URL = 'https://sqs.default-region.amazonaws.com/123456789012/healthCheckQueue',
+  /**
+   * SQS is eventually consistent after `CreateQueue`: `SendMessage` can still
+   * report QueueDoesNotExist for roughly a second on a freshly created queue.
+   * The create path waits this long before re-resolving and retrying once.
+   */
+  SQS_QUEUE_CREATION_PROPAGATION_MS = '1000'
 } = process.env;
+
+/** Result of resolving `IEnqueueOptions.queueId` to an SQS queue URL. */
+interface ResolvedQueue {
+  queueUrl: string
+  /** True when this call created the queue (so a 404 on send may be propagation). */
+  created: boolean
+}
 
 
 @service({
@@ -57,6 +72,12 @@ export class AWSSQSQueueService implements QueueServiceType {
   queueUrl: string;
   healthCheckQueueUrl: string;
 
+  /** Resolved queue id -> SQS queue URL, so lookup/creation happens once. */
+  private queueUrls: Map<string, string> = new Map();
+
+  /** Delay before re-resolving after `CreateQueue`; overridable for tests. */
+  private createQueuePropagationMs: number;
+
   constructor(props: any, context: Reactory.Server.IReactoryContext) {
     this.props = props;
     this.context = context;
@@ -70,16 +91,139 @@ export class AWSSQSQueueService implements QueueServiceType {
     // Initialize queue URLs
     this.queueUrl = props?.queueUrl || DEFAULT_SQS_QUEUE_URL;
     this.healthCheckQueueUrl = props?.healthCheckQueueUrl || HEALTH_CHECK_SQS_QUEUE_URL;
+    this.createQueuePropagationMs = Number.isFinite(props?.createQueuePropagationMs)
+      ? props.createQueuePropagationMs
+      : parseInt(SQS_QUEUE_CREATION_PROPAGATION_MS, 10);
   }
-  
-  async enqueue(message: EventEnvelope, options?: IEnqueueOptions): Promise<string> {
+
+  /**
+   * Only a genuine "queue does not exist" may be answered with `CreateQueue`.
+   * AccessDenied, throttling, expired credentials and network failures must
+   * surface unchanged, otherwise a misconfiguration looks like a missing queue
+   * and every enqueue attempts a doomed create.
+   */
+  private isQueueDoesNotExist(error: unknown): boolean {
+    const err = error as {
+      name?: string
+      Code?: string
+      code?: string
+      message?: string
+      $metadata?: { httpStatusCode?: number }
+    } | null | undefined;
+
+    const code = err?.name || err?.Code || err?.code || '';
+    if (code === 'QueueDoesNotExist' || code === 'AWS.SimpleQueueService.NonExistentQueue') {
+      return true;
+    }
+
+    if (err?.$metadata?.httpStatusCode === 404) return true;
+
+    return /QueueDoesNotExist|NonExistentQueue/.test(String(err?.message ?? ''));
+  }
+
+  private async wait(ms: number): Promise<void> {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Resolve the SQS queue URL addressed by `options.queueId`.
+   *
+   * A queue id that already is a URL is used verbatim (matching
+   * `receiveMessages`, which treats `queueId` as a queue URL). A bare queue id
+   * is looked up by name and, when `createIfNotExists` is set, created — that is
+   * what makes the option meaningful for SQS, which otherwise addresses a
+   * single pre-provisioned queue URL.
+   *
+   * `forceRefresh` bypasses the per-id cache; it is used after a create when
+   * `SendMessage` reported the queue as missing (propagation lag).
+   */
+  private async resolveQueueUrl(
+    options?: IEnqueueOptions,
+    forceRefresh = false
+  ): Promise<ResolvedQueue> {
+    const queueId = options?.queueId;
+    if (!queueId) return { queueUrl: this.queueUrl, created: false };
+
+    if (/^https?:\/\//i.test(queueId)) return { queueUrl: queueId, created: false };
+
+    if (!forceRefresh) {
+      const cached = this.queueUrls.get(queueId);
+      if (cached) return { queueUrl: cached, created: false };
+    }
+
+    let queueUrl: string | undefined;
+    try {
+      const response = await this.sqsClient.send(
+        new GetQueueUrlCommand({ QueueName: queueId })
+      );
+      queueUrl = response?.QueueUrl;
+    } catch (error) {
+      if (!this.isQueueDoesNotExist(error)) {
+        // Real AWS problem (credentials, permissions, throttling, network):
+        // log with context and let the original error through.
+        this.context?.error?.(
+          `Failed to resolve AWS SQS queue '${queueId}'`,
+          error as Error,
+          'AWSSQSQueueService.resolveQueueUrl'
+        );
+        throw error;
+      }
+    }
+
+    if (!queueUrl) {
+      if (!options?.createIfNotExists) {
+        throw new Error(`Queue ${queueId} does not exist.`);
+      }
+
+      const response = await this.sqsClient.send(
+        new CreateQueueCommand({ QueueName: queueId })
+      );
+      queueUrl = response?.QueueUrl;
+
+      if (!queueUrl) {
+        throw new Error(`Queue ${queueId} could not be resolved after CreateQueue.`);
+      }
+
+      this.queueUrls.set(queueId, queueUrl);
+      return { queueUrl, created: true };
+    }
+
+    this.queueUrls.set(queueId, queueUrl);
+    return { queueUrl, created: false };
+  }
+
+  private async sendMessage(queueUrl: string, message: EventEnvelope): Promise<string> {
     const command = new SendMessageCommand({
-      QueueUrl: this.queueUrl,
+      QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message)
     });
-    
+
     const response = await this.sqsClient.send(command);
     return response.MessageId ?? '';
+  }
+
+  async enqueue(message: EventEnvelope, options?: IEnqueueOptions): Promise<string> {
+    const resolved = await this.resolveQueueUrl(options);
+
+    try {
+      return await this.sendMessage(resolved.queueUrl, message);
+    } catch (error) {
+      // A queue created by this call may not be visible to SendMessage yet
+      // (SQS eventual consistency). Re-resolve once and retry, but only on the
+      // create path: a queue that already existed must keep surfacing errors.
+      if (!resolved.created || !this.isQueueDoesNotExist(error)) {
+        throw error;
+      }
+
+      await this.wait(this.createQueuePropagationMs);
+
+      const retried = await this.resolveQueueUrl(
+        { ...(options ?? {}), createIfNotExists: true },
+        true
+      );
+      return this.sendMessage(retried.queueUrl, message);
+    }
   }
 
   async dequeue(): Promise<EventEnvelope> {

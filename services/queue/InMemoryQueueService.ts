@@ -47,12 +47,21 @@ export class InMemoryQueueService implements QueueServiceType {
   
   async enqueue(message: EventEnvelope, options?: IEnqueueOptions): Promise<string> {
     const queueName = options?.queueId || DEFAULT_QUEUE_NAME;
-    const queue = this.queue.get(queueName);
-    if (queue) {
-      queue.push(message);
-      return `${queueName}-${queue.length - 1}`; // Simulated message ID
+    let queue = this.queue.get(queueName);
+
+    if (!queue) {
+      // The provider has no implicit queue creation: without the opt-in flag an
+      // unknown queue id is an error. Honouring the flag here is what callers
+      // that pass `createIfNotExists: true` rely on.
+      if (!options?.createIfNotExists) {
+        throw new Error(`Queue ${queueName} does not exist.`);
+      }
+      queue = [];
+      this.queue.set(queueName, queue);
     }
-    throw new Error(`Queue ${queueName} does not exist.`);
+
+    queue.push(message);
+    return `${queueName}-${queue.length - 1}`; // Simulated message ID
   }
 
   async dequeue(queueId: string = DEFAULT_QUEUE_NAME): Promise<EventEnvelope> {
