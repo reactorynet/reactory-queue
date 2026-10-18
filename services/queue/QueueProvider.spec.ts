@@ -162,9 +162,9 @@ describe('QueueProvider', () => {
       const provider = queueProvider.getDefaultProvider();
 
       // The in-memory provider only pre-creates its default and health-check
-      // queues; enqueueing to an unknown queue id throws rather than creating
-      // it (this provider does not implement IEnqueueOptions.createIfNotExists).
-      // Create the queue through the provider's own API first.
+      // queues. This exercises the explicit createQueue path; the
+      // `createIfNotExists` opt-in is covered separately in
+      // EnqueueCreateIfNotExists.spec.ts.
       await provider?.createQueue('test-queue');
 
       const message: EventEnvelope = {

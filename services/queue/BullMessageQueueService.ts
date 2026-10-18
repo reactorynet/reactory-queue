@@ -14,6 +14,12 @@ const {
   HEALTH_CHECK_QUEUE_NAME = 'healthCheckQueue'
 } = process.env;
 
+/**
+ * `enqueue` accepts the queue contract options (`queueId`, `createIfNotExists`)
+ * as well as BullMQ job options (`priority`, `delay`, `attempts`, ...).
+ */
+type EnqueueOptions = IEnqueueOptions & JobsOptions;
+
 @service({
   id: 'reactory.BullMessageQueueService@1.0.0',
   nameSpace: 'reactory',
@@ -60,9 +66,40 @@ export class BullMessageQueueService implements QueueServiceType {
       }
     });
   }
-  
-  async enqueue(message: EventEnvelope, options?: JobsOptions): Promise<string> {
-    const job = await this.queue.add('enqueueJob', message, options);
+
+  /**
+   * `IEnqueueOptions.createIfNotExists` needs no explicit implementation here:
+   * BullMQ materialises a queue's backing structures on the first `add`, so
+   * enqueueing to a queue that has never been used cannot fail with
+   * "queue does not exist". The option is therefore accepted and inherently
+   * honoured rather than ignored.
+   *
+   * This provider addresses ONE queue at a time through the mutable `this.queue`
+   * slot and deliberately ignores `options.queueId` here, matching
+   * `receiveMessages`, `count` and `deleteMessage`. Callers that need to target
+   * another queue call `createQueue(queueId)` first (the `ensureQueue` /
+   * `selectQueue` helpers in `reactory-product/events` exist for exactly this).
+   * Routing `enqueue` by `queueId` while the read paths stay on `this.queue`
+   * would strand messages, so the single slot is kept on purpose.
+   */
+  async enqueue(message: EventEnvelope, options?: EnqueueOptions): Promise<string> {
+    // Only genuine BullMQ job options may reach `add`; the queue-contract
+    // fields would otherwise be stored on every job.
+    const {
+      queueId,
+      createIfNotExists,
+      responseQueueId,
+      failureQueueId,
+      ...jobOptions
+    } = options ?? {};
+
+    // Accepted for contract compatibility; see the method comment.
+    void queueId;
+    void createIfNotExists;
+    void responseQueueId;
+    void failureQueueId;
+
+    const job = await this.queue.add('enqueueJob', message, jobOptions as JobsOptions);
     return job.id;
   }
 

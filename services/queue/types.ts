@@ -12,7 +12,17 @@ export interface IEnqueueOptions {
   responseQueueId?: string
   failureQueueId?: string
   /**
-   * Will create a queue if it does not exist.
+   * Create the destination queue when it does not exist instead of failing the
+   * enqueue.
+   *
+   * - `InMemoryQueueService` creates the queue; without the flag an unknown
+   *   `queueId` throws `Queue <queueId> does not exist.`
+   * - `AWSSQSQueueService` looks `queueId` up by name, creating it when the
+   *   flag is set (``queueId``s that already are URLs are used verbatim).
+   * - `BullMessageQueueService` never needs an explicit create: BullMQ
+   *   materialises a queue on the first `add`. That provider also addresses a
+   *   single queue per instance and ignores `queueId`; call `createQueue()`
+   *   first to target another queue.
    */
   createIfNotExists?: boolean
 }
