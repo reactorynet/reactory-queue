@@ -37,6 +37,25 @@ export class InMemoryQueueService implements QueueServiceType {
   provider: string = 'in-memory';
   queue: Map<string, EventEnvelope[]>;
 
+  /**
+   * Monotonic counter backing delivery handles.
+   *
+   * The handle used to be `<queueName>-<index>`, and an array index is NOT an
+   * identity: every removal shifts the array underneath it. A handle minted
+   * before a removal then either points at a DIFFERENT envelope (so the wrong
+   * message was deleted — losing work that still had to be sent) or past the end
+   * (`queue[index]` undefined, so nothing was deleted and the envelope was
+   * re-peeked on every cycle forever).
+   *
+   * The second case is what produced the endless
+   * `Envelope skipped: message is unknown or already terminal` warnings: the
+   * envelope for an already-terminal message could never be removed, so every
+   * poll re-delivered it, re-claimed nothing, and warned again.
+   *
+   * A sequence number is stable for the lifetime of the envelope.
+   */
+  private deliverySequence = 0;
+
   constructor(props: any, context: Reactory.Server.IReactoryContext) {
     this.props = props;
     this.context = context;
@@ -60,8 +79,18 @@ export class InMemoryQueueService implements QueueServiceType {
       this.queue.set(queueName, queue);
     }
 
+    // Stamp a stable identity on the envelope BEFORE storing it, so a consumer
+    // that received the envelope can settle it by that identity without needing
+    // the handle returned here. `QueueListener` deletes by `header.id`, and other
+    // consumers delete by the returned handle; both must work.
+    this.deliverySequence += 1;
+    const deliveryId = `${queueName}#${this.deliverySequence}`;
+    if (message && message.header) {
+      (message.header as any).deliveryId = deliveryId;
+    }
+
     queue.push(message);
-    return `${queueName}-${queue.length - 1}`; // Simulated message ID
+    return deliveryId;
   }
 
   async dequeue(queueId: string = DEFAULT_QUEUE_NAME): Promise<EventEnvelope> {
@@ -72,12 +101,49 @@ export class InMemoryQueueService implements QueueServiceType {
     throw new Error(`No messages available in queue ${queueId}.`);
   }
 
+  /**
+   * Remove an envelope by identity.
+   *
+   * Matches, in order:
+   *   1. `header.deliveryId` — the handle returned by `enqueue` (the normal path);
+   *   2. `header.id` — the business id, which `QueueListener` and the `#deleteMessage`
+   *      REST surfaces pass, and which they cannot know a provider handle for;
+   *   3. a legacy `<queue>-<index>` handle, for envelopes enqueued by an older
+   *      build in the same process.
+   *
+   * Deletion is by value, never positionally, so an earlier removal cannot make a
+   * later handle point at the wrong envelope. `options.queueId` narrows the search
+   * when the caller knows it; otherwise every queue is scanned, because a stale
+   * handle from a previous cycle may name a queue the envelope has since left.
+   */
   async deleteMessage(id: string, options?: DeleteMessageOptions): Promise<void> {
-    const [queueId, indexStr] = id.split('-');
-    const index = parseInt(indexStr);
-    const queue = this.queue.get(queueId);
-    if (queue && queue[index]) {
-      queue.splice(index, 1);
+    if (typeof id !== 'string' || id.length === 0) return;
+
+    const prefersQueue = options?.queueId ? this.queue.get(options.queueId) : undefined;
+    const candidates: EventEnvelope[][] = prefersQueue ? [prefersQueue] : [...this.queue.values()];
+
+    const removeFirstMatch = (predicate: (envelope: any) => boolean): boolean => {
+      for (const queue of candidates) {
+        const index = queue.findIndex(predicate);
+        if (index >= 0) {
+          queue.splice(index, 1);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (removeFirstMatch((envelope) => envelope?.header?.deliveryId === id)) return;
+    if (removeFirstMatch((envelope) => envelope?.header?.id === id)) return;
+
+    // Legacy positional handle: `<queueName>-<index>`.
+    const legacy = /^(.*)-(\d+)$/.exec(id);
+    if (legacy) {
+      const queue = this.queue.get(legacy[1]);
+      const index = parseInt(legacy[2], 10);
+      if (queue && Number.isInteger(index) && index >= 0 && index < queue.length) {
+        queue.splice(index, 1);
+      }
     }
   }
 

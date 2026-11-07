@@ -104,7 +104,11 @@ describe('IEnqueueOptions.createIfNotExists', () => {
         createIfNotExists: true,
       });
 
-      expect(id).toBe('brand-new-queue-0');
+      // The handle is an opaque identity, not an array position: a positional
+      // `<queue>-<index>` handle stops identifying the envelope as soon as any
+      // earlier envelope is removed. Assert it is usable, not its spelling.
+      expect(typeof id).toBe('string');
+      expect(id.length).toBeGreaterThan(0);
       expect(await service.count('brand-new-queue')).toBe(1);
       // Proves the message landed on the requested queue, not merely somewhere.
       await expect(service.dequeue('brand-new-queue')).resolves.toEqual(message);
@@ -133,7 +137,9 @@ describe('IEnqueueOptions.createIfNotExists', () => {
     it('falls back to the default queue when no options are supplied', async () => {
       const id = await service.enqueue(envelope('default'));
 
-      expect(id).toBe('defaultQueue-0');
+      expect(typeof id).toBe('string');
+      expect(id.length).toBeGreaterThan(0);
+      expect(await service.count('defaultQueue')).toBe(1);
       expect(context.error).not.toHaveBeenCalled();
     });
 
