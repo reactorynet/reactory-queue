@@ -9,6 +9,6 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "3.775.0",
     "bullmq": "5.25.4",
-    "bullmq-otel": "1.0.1"
+    "bullmq-otel": "2.0.1"
   }
 }
