@@ -8,7 +8,7 @@
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-sqs": "3.775.0",
-    "bullmq": "5.25.4",
+    "bullmq": "6.7.1",
     "bullmq-otel": "1.0.1"
   }
 }
