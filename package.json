@@ -7,7 +7,7 @@
   "author": "W. Weber",
   "license": "MIT",
   "dependencies": {
-    "@aws-sdk/client-sqs": "3.775.0",
+    "@aws-sdk/client-sqs": "3.1163.0",
     "bullmq": "5.25.4",
     "bullmq-otel": "1.0.1"
   }
